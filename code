@@ -1,0 +1,32 @@
+def factor_page_determination(factors, pdf_path):
+    factor_map = {str(f).strip().lower(): str(f) for f in factors}
+    page_dict = {v: [] for v in factor_map.values()}
+
+    pdf = fitz.open(pdf_path)
+
+    for page_index, page in enumerate(pdf):
+
+        text = page.get_text().replace("\n", " ").lower()
+
+        for factor_lower, original_factor in factor_map.items():
+            if factor_lower in text:
+                page_dict[original_factor].append(page_index + 1)
+
+    pdf.close()
+
+    gc.collect()
+
+    factor_result = {}
+    for factor, pages in page_dict.items():
+        if pages:
+            factor_result[factor] = ", ".join([str(p) for p in pages])
+        else:
+            factor_result[factor] = "NOT FOUND"
+
+    df = pd.DataFrame.from_dict(
+        factor_result,
+        orient="index",
+        columns=["Factor Pages"]
+    )
+
+    return df
