@@ -1,58 +1,41 @@
-print(12)
-count = 0
-if Policy_Origination_Page != "":
-    text = pdf_text[Policy_Origination_Page]
-    for s in range(1,3):
-        ResSearch = re.findall("PMR 2.5 " + str(calib_check[s]), text, re.I)
-        if len(ResSearch) > 0:
-            count = count + len(ResSearch)
+print(type(tab_list))
 
-    if count == 2:
-        df_calib.iloc[2,0] = "OK : Page " + str(Policy_Origination_Page + 1)
+pdf_file = r"\\PDC-SAS-DATA.LM.LMIG.COM\USCM_SAS_Prod_LocalAccess_NAS_T3_PROD01\Property_Delivery\Product_Delivery\EXL Team\Sanjana\HMR 3.0 FQC Tool\Rating and Tiering Files\CT AEIC Homeowner Rating Manual Page 1 of 6_Proof.pdf"
+
+process_pdf(pdf_file, url)
+
+
+def all_pdfs_run(url):
+    all_pdfs = [f for f in os.listdir(url) if f.lower().endswith(".pdf")]
+    all_results = []
+
+    for pdf in all_pdfs:
+        print(f"processing: {pdf}")
+        df_result = process_pdf(pdf, url)
+        if df_result is not None:
+            all_results.append(df_result)
+
+    if all_results:
+        df_all = pd.concat(all_results, axis=1)
+        return df_all
     else:
-        df_calib.iloc[2,0] = "CHECK : Page " + str(Policy_Origination_Page + 1)
-
-print(13)
-count = 0
-if Peril_Offset_Zone_page != "":
-    text = pdf_text[Peril_Offset_Zone_page]
-    for s in range(3,5):
-        ResSearch = re.findall(str(calib_check[s]), text, re.I)
-        if len(ResSearch) > 0:
-            count = count + len(ResSearch)
-
-    if count == 2:
-        df_calib.iloc[0,0] = "OK : Page " + str(Peril_Offset_Zone_page + 1)
-    else:
-        df_calib.iloc[0,0] = "CHECK : Page " + str(Peril_Offset_Zone_page + 1)
+        print("no valid pdf")
+        return pd.DataFrame()
 
 
-### Factor Detection
-print(14)
-df_factors = factor_page_determination(tab_list, url1)
-df_factors.columns = [pdf_file]
-
-print(15)
-### territory Validation
-rate_td_code_list = []
-with pdfplumber.open(url1) as pdf:
-    for page_idx in territory_page:
-        table = pdf.pages[page_idx].extract_table()
-        if table:
-            table_df = pd.DataFrame(table[1:], columns = table[0])
-            rate_td_code_list.extend(table_df.iloc[:,0].dropna().tolist())
-
-rate_td_code_list = sorted(set(rate_td_code_list) - {"Territory"})
-
-if len(rate_td_code_list) > 10:
-    print(f"{pdf_file}: {len(rate_td_code_list)} territory codes found")
+df_all = all_pdfs_run(url)
+df_all
 
 
-print(16)
-frames = [df_num, df_calib, df_head, df_r1, df_size, df_labels, df_search, df_factors]
-df_final = pd.concat(frames, axis=0)
+def save_to_excel(df_all, output_folder, file_name="Filing Materials QC Report.xlsx"):
+    os.makedirs(output_folder, exist_ok=True)
 
-return df_final
+    output_path = os.path.join(output_folder, file_name)
+    df_all.to_excel(output_path, index=True)
 
-except Exception as e:
-    print(f"Error in processing {pdf_file}: {e}")
+    print("Excel file saved")
+
+
+output_folder = r"\\PDC-SAS-DATA.LM.LMIG.COM\USCM_SAS_Prod_LocalAccess_NAS_T3_PROD01\Property_Delivery\Product_Delivery\EXL Team\Sanjana\HMR 3.0 FQC Tool\Rating and Tiering Files"
+
+save_to_excel(df_all, output_folder)
