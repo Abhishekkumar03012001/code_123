@@ -1,5 +1,192 @@
-pdf_path = r"\\PDC-SAS-DATA.LM.LMIG.COM\USCM_SAS_Prod_LocalAccess_NAS_T3_PROD01_Property_Delivery\Product_Delivery\..."
+def process_pdf(pdf_file, url):
+    try:
+        url1 = os.path.join(url, pdf_file)
+        # url1 = url + '/' + pdf_file
 
-df_factors = factor_page_determination(tab_list, pdf_path)
+        pdf_reader = PdfReader(url1)
+        num1 = len(pdf_reader.pages)
 
-print(df_factors)
+        ### Extracting text for all pages at once
+        pdf_text = []
+        for k in range(num1):
+            try:
+                text = pdf_reader.pages[k].extract_text() or ""
+            except Exception:
+                text = ""
+            pdf_text.append(text)
+
+        if "Tiering Manual" in pdf_file:
+            header_list = [state_full, "Homeowner Tiering Manual Page", uw_full, "Effective"]
+            custom_word_search = tier_custom_search
+            calibration = []
+        else:
+            header_list = [state_full, "Homeowner Rating Manual Page", uw_full, "Effective"]
+            custom_word_search = rate_custom_search
+            calibration = ["Base Rate Decimal Values"]
+
+        rate_restricted = [
+            "9.99","99.999","99","-99","999","-999","9999",
+            "9007","9008","9999.00000","99999","999999",
+            "9999999","99999999","999999999"
+        ]
+
+        labels = [
+            "Fire","Lightning","County","Limit","Construction","State","Upper",
+            "Rate per 100","Amount","Effective","Reinsurance","WaterWinter",
+            "Hurricane","LiabilityPollution","MinimumSchedProperty",
+            "Landlord's Furnishings","Refrigerated Spoilage Coverage",
+            "Service Line","Identity Fraud Expense Coverage","WaterNonWinter",
+            "WindSummer","WindWinter","Hail","TheftVandalism","Theft","Other",
+            "Capital","Wildfire", r"\b"+"State"+r"\b","Company","Base",
+            "State"+r"\b","Bound",r"\b"+"Limit"+r"\b","Limit"+r"\b",
+            r"\b"+"Construction"+r"\b",r"\b"+"Upper"+r"\b","Upper"+r"\b",
+            r"\b"+"County"+r"\b","County"+r"\b","Coverage","Type",
+            "Coverage Rate","Equipment Breakdown","Liability Limit",
+            "Rate","NumSqft"
+        ]
+
+        ### Creating dataframes
+        pages_list = ["Number of pages","Blank pages"]
+        df_num = pd.DataFrame(columns=[pdf_file], index=pages_list)
+        df_search = pd.DataFrame(columns=[pdf_file], index=[custom_word_search])
+        df_head = pd.DataFrame(columns=[pdf_file], index=header_list)
+        df_labels = pd.DataFrame(columns=[pdf_file], index=["Column Labels"])
+        df_r1 = pd.DataFrame(columns=[pdf_file], index=rate_restricted)
+        df_size = pd.DataFrame(columns=[pdf_file], index=["File size <= 3000Kb"])
+        df_calib = pd.DataFrame(columns=[pdf_file], index=["Calibration Values"])
+
+        Tab_list = ["Base Rates","Policy Origination","Peril Offset by Zone","Territory"]
+        df_var = pd.DataFrame(columns=[pdf_file], index=Tab_list)
+
+        ### Header Validation
+        for s in range(len(header_list)):
+            page_number = [k+1 for k,text in enumerate(pdf_text) if header_list[s] not in text]
+            if not page_number:
+                df_head.iloc[s,0] = "OK"
+            else:
+                df_head.iloc[s,0] = "CHECK: Page "+str(page_number)
+
+        ### Detecting Tabpages
+        Base_Rate_page=""
+        Policy_Origination_Page=""
+        Peril_Offset_Zone_page=""
+        territory_page=[]
+
+        compiled_tabs = {tab: re.compile(rf"\b{re.escape(tab)}\b", re.I) for tab in Tab_list}
+
+        for i,text in enumerate(pdf_text):
+            for tab,pattern in compiled_tabs.items():
+                if pattern.search(text):
+                    df_var.loc[tab,pdf_file] = f"Found on Page {i+1}"
+                    if tab=="Base Rates":
+                        Base_Rate_page=i
+                    elif tab=="Policy Origination":
+                        Policy_Origination_Page=i
+                    elif tab=="Peril Offset by Zone":
+                        Peril_Offset_Zone_page=i
+                    elif tab=="Territory":
+                        territory_page.append(i)
+
+        ### Blank Page Validation
+        df_num.iloc[0,0]=f"OK: {num1}"
+        blank_pages_list=[]
+
+        head_foot=str(uw_full)+str(state_fullname)+str(" Homeowner Rating Manual Effective")
+
+        for i,text in enumerate(pdf_text):
+            if len(text.strip())<=len(head_foot)+10:
+                blank_pages_list.append(i+1)
+
+        if blank_pages_list:
+            df_num.iloc[1,0]="CHECK: Page "+str(blank_pages_list)
+        else:
+            df_num.iloc[1,0]="OK"
+
+        ### File size validation
+        file_size=os.path.getsize(url1)
+        df_size.iloc[0,0]="OK" if file_size<3072000 else "CHECK"
+
+        ### Custom search validation
+        error_rate_list=[]
+        for page_no,text in enumerate(pdf_text):
+            for term in rate_custom_search:
+                if term in text:
+                    error_rate_list.append(page_no+1)
+
+        if error_rate_list:
+            df_search.iloc[0,0]="CHECK: Page "+str(error_rate_list)
+        else:
+            df_search.iloc[0,0]="OK: WORD NOT FOUND"
+
+        ### Label Validation
+        pg=list(range(1,num1+1))
+        ex_list=[]
+
+        for label in labels:
+            for k,text in enumerate(pdf_text):
+                if (k+1) not in ex_list and label.lower() in text.lower():
+                    ex_list.append(k+1)
+                    if (k+1) in pg:
+                        pg.remove(k+1)
+
+        if not pg:
+            df_labels.iloc[0,0]="OK"
+        else:
+            df_labels.iloc[0,0]="CHECK: Page "+str(pg)
+
+        ### Rate restricted validation
+        for s in range(len(rate_restricted)):
+            page_number=[]
+            rate_999=re.escape(rate_restricted[s])
+            rate_999=r"(?<!\S)"+rate_999+r"(?!\S)"
+            pattern=re.compile(rate_999)
+
+            for k,text in enumerate(pdf_text):
+                if pattern.search(text):
+                    page_number.append(k+1)
+
+            if not page_number:
+                df_r1.iloc[s,0]="OK"
+            else:
+                df_r1.iloc[s,0]="CHECK: Page "+str(page_number)
+
+        ### Calibration Validation
+        if calibration:
+            pattern_decimal=re.compile(r"Base\s*Rate[^0-9]*\d+\.\d{4}",re.I)
+            found=False
+
+            for i,text in enumerate(pdf_text):
+                if pattern_decimal.search(text):
+                    df_calib.loc["Base Rate Decimal Values",pdf_file]=f"OK: Page {i+1}"
+                    found=True
+                    break
+
+            if not found:
+                df_calib.iloc[0,0]="CHECK"
+
+        ### Factor Detection
+        df_factors=factor_page_determination(tab_list,url1)
+        df_factors.columns=[pdf_file]
+
+        ### Territory Validation
+        rate_td_code_list=[]
+        with pdfplumber.open(url1) as pdf:
+            for page_idx in territory_page:
+                table=pdf.pages[page_idx].extract_table()
+                if table:
+                    table_df=pd.DataFrame(table[1:],columns=table[0])
+                    rate_td_code_list.extend(table_df.iloc[:,0].dropna().tolist())
+
+        rate_td_code_list=sorted(set(rate_td_code_list))-{"Territory"}
+
+        if len(rate_td_code_list)>10:
+            print(f"{pdf_file}: {len(rate_td_code_list)} territory codes found")
+
+        ### Final dataframe
+        frames=[df_num,df_calib,df_head,df_r1,df_size,df_labels,df_search,df_factors]
+        df_final=pd.concat(frames,axis=0)
+
+        return df_final
+
+    except Exception as e:
+        print(f"Error in processing {pdf_file}: {e}")
